@@ -141,6 +141,26 @@ class OsintMonitorTests(unittest.TestCase):
         self.assertEqual(log_records[1]["results"][0]["title"], "Credential theft linked to breach")
         self.assertIn("summary", log_records[0])
 
+    def test_log_results_creates_parent_directory(self):
+        results = analyze_items(
+            [
+                FeedItem(
+                    title="DNS outage affects services",
+                    link="https://example.com/f",
+                    summary="A DDoS event caused an outage.",
+                    source="feed-f",
+                )
+            ],
+            KEYWORD_CATEGORIES,
+            CATEGORY_WEIGHTS,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_file = Path(temp_dir) / "logs" / "osint_results.log"
+            log_results(results, log_file=log_file)
+
+            self.assertTrue(log_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

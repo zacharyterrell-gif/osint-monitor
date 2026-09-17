@@ -244,6 +244,7 @@ def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FIL
     """Append the latest findings to a JSON lines log file."""
 
     results = list(results)
+    log_file = Path(log_file)
     timestamp = datetime.now(timezone.utc).isoformat()
     log_record = {
         "timestamp": timestamp,
@@ -260,6 +261,7 @@ def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FIL
         ],
     }
 
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     with log_file.open("a", encoding="utf-8") as handle:
         # One JSON object per line keeps the log easy to read and easy to parse later.
         handle.write(json.dumps(log_record, ensure_ascii=False) + "\n")
