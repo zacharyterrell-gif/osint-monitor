@@ -132,11 +132,14 @@ class OsintMonitorTests(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile("r+", encoding="utf-8") as handle:
             log_results(results, log_file=Path(handle.name))
+            log_results(results, log_file=Path(handle.name))
             handle.seek(0)
-            log_record = json.loads(handle.readline())
+            log_records = [json.loads(line) for line in handle.readlines()]
 
-        self.assertEqual(log_record["results"][0]["title"], "Credential theft linked to breach")
-        self.assertIn("summary", log_record)
+        self.assertEqual(len(log_records), 2)
+        self.assertEqual(log_records[0]["results"][0]["title"], "Credential theft linked to breach")
+        self.assertEqual(log_records[1]["results"][0]["title"], "Credential theft linked to breach")
+        self.assertIn("summary", log_records[0])
 
 
 if __name__ == "__main__":

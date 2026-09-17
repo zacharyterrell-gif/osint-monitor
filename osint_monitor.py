@@ -83,7 +83,7 @@ def fetch_feed(url: str) -> list[FeedItem]:
     try:
         with urlopen(url, timeout=15) as response:
             raw_xml = response.read()
-    except URLError as error:
+    except (URLError, OSError, TimeoutError) as error:
         LOGGER.warning("Could not fetch feed %s: %s", url, error)
         return []
 
