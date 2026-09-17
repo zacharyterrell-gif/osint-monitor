@@ -16,7 +16,7 @@ This beginner-friendly script:
 
 - `osint_monitor.py` - main monitoring script
 - `tests/test_osint_monitor.py` - basic unit tests
-- `osint_results.log` - created automatically after the script runs, with one JSON record per run
+- `osint_results.log` - default log file path, with one JSON record per run
 
 ## How to run
 

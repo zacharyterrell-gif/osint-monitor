@@ -7,12 +7,14 @@ file for later review.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from urllib.error import URLError
 from urllib.request import urlopen
+import fcntl
 import json
 import logging
 import re
@@ -161,6 +163,17 @@ def keyword_in_text(text: str, keyword: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+@contextmanager
+def locked_file(handle):
+    """Lock the log file while writing so one run keeps one full JSON line."""
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        yield handle
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def find_keyword_matches(text: str, categories: dict[str, list[str]]) -> dict[str, list[str]]:
     """Return every keyword found in the text, grouped by category."""
 
@@ -263,8 +276,9 @@ def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FIL
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
     with log_file.open("a", encoding="utf-8") as handle:
-        # One JSON object per line keeps the log easy to read and easy to parse later.
-        handle.write(json.dumps(log_record, ensure_ascii=False) + "\n")
+        with locked_file(handle):
+            # One JSON object per line keeps the log easy to read and easy to parse later.
+            handle.write(json.dumps(log_record, ensure_ascii=False) + "\n")
 
 
 def print_results(results: Iterable[MatchResult]) -> None:
