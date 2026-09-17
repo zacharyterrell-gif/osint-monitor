@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import tempfile
+import threading
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -160,6 +161,38 @@ class OsintMonitorTests(unittest.TestCase):
             log_results(results, log_file=log_file)
 
             self.assertTrue(log_file.exists())
+
+    def test_log_results_keeps_concurrent_appends_as_json_lines(self):
+        results = analyze_items(
+            [
+                FeedItem(
+                    title="Zero-day phishing campaign",
+                    link="https://example.com/g",
+                    summary="Credential theft followed the exploit.",
+                    source="feed-g",
+                )
+            ],
+            KEYWORD_CATEGORIES,
+            CATEGORY_WEIGHTS,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_file = Path(temp_dir) / "osint_results.log"
+            threads = [
+                threading.Thread(target=log_results, args=(results, log_file))
+                for _ in range(10)
+            ]
+
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            with log_file.open("r", encoding="utf-8") as handle:
+                log_records = [json.loads(line) for line in handle.readlines()]
+
+        self.assertEqual(len(log_records), 10)
+        self.assertTrue(all(record["results"][0]["title"] == "Zero-day phishing campaign" for record in log_records))
 
 
 if __name__ == "__main__":
