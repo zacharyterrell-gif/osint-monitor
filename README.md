@@ -35,3 +35,4 @@ python -m unittest discover -s tests
 - Edit `RSS_FEEDS` in `osint_monitor.py` to monitor different sources.
 - Edit `KEYWORD_CATEGORIES` to add or remove tracking terms.
 - Edit `CATEGORY_WEIGHTS` to change how threat scores are calculated.
+- Use `log_results(..., log_file=...)` if you want a different log location; missing parent folders are created automatically.

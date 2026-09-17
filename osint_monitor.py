@@ -13,12 +13,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
-import fcntl
 import json
 import logging
 import re
 import xml.etree.ElementTree as ET
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - only used on platforms without fcntl.
+    fcntl = None
 
 
 # These are example feeds a beginner can change without touching the logic.
@@ -84,6 +89,10 @@ def fetch_feed(url: str) -> list[FeedItem]:
 
     try:
         with urlopen(url, timeout=15) as response:
+            final_url = response.geturl()
+            if urlparse(final_url).scheme not in {"http", "https"}:
+                LOGGER.warning("Skipped feed %s because it redirected to %s", url, final_url)
+                return []
             raw_xml = response.read()
     except (URLError, OSError, TimeoutError) as error:
         LOGGER.warning("Could not fetch feed %s: %s", url, error)
@@ -166,6 +175,10 @@ def keyword_in_text(text: str, keyword: str) -> bool:
 @contextmanager
 def locked_file(handle):
     """Lock the log file while writing so one run keeps one full JSON line."""
+
+    if fcntl is None:
+        yield handle
+        return
 
     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
     try:
