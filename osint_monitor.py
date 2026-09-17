@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Iterable
 from urllib.error import URLError
 from urllib.request import urlopen
+import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 
@@ -47,6 +49,7 @@ CATEGORY_WEIGHTS = {
 
 
 DEFAULT_LOG_FILE = Path("osint_results.log")
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -81,13 +84,13 @@ def fetch_feed(url: str) -> list[FeedItem]:
         with urlopen(url, timeout=15) as response:
             raw_xml = response.read()
     except URLError as error:
-        print(f"Could not fetch feed: {url} ({error})")
+        LOGGER.warning("Could not fetch feed %s: %s", url, error)
         return []
 
     try:
         root = ET.fromstring(raw_xml)
     except ET.ParseError as error:
-        print(f"Could not parse feed: {url} ({error})")
+        LOGGER.warning("Could not parse feed %s: %s", url, error)
         return []
 
     return parse_feed_items(root, url)
@@ -238,20 +241,28 @@ def build_summary(results: Iterable[MatchResult]) -> str:
 
 
 def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FILE) -> None:
-    """Append the latest findings to a local log file."""
+    """Append the latest findings to a JSON lines log file."""
 
     results = list(results)
     timestamp = datetime.now(timezone.utc).isoformat()
-    summary = build_summary(results)
+    log_record = {
+        "timestamp": timestamp,
+        "summary": build_summary(results),
+        "results": [
+            {
+                "title": result.item.title,
+                "source": result.item.source,
+                "link": result.item.link,
+                "threat_score": result.threat_score,
+                "matched_keywords": result.matched_keywords,
+            }
+            for result in results
+        ],
+    }
 
     with log_file.open("a", encoding="utf-8") as handle:
-        handle.write(f"[{timestamp}] {summary}\n")
-        for result in results:
-            categories = ", ".join(result.matched_keywords.keys())
-            handle.write(
-                f"  - score={result.threat_score} source={result.item.source} "
-                f"title={result.item.title} categories={categories} link={result.item.link}\n"
-            )
+        # One JSON object per line keeps the log easy to read and easy to parse later.
+        handle.write(json.dumps(log_record, ensure_ascii=False) + "\n")
 
 
 def print_results(results: Iterable[MatchResult]) -> None:
@@ -275,6 +286,7 @@ def print_results(results: Iterable[MatchResult]) -> None:
 def main() -> None:
     """Fetch all feeds, analyze items, print a summary, and log results."""
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     all_items: list[FeedItem] = []
 
     for feed_url in RSS_FEEDS:

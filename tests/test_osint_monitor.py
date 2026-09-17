@@ -1,3 +1,6 @@
+from pathlib import Path
+import json
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -8,6 +11,7 @@ from osint_monitor import (
     analyze_items,
     build_summary,
     find_keyword_matches,
+    log_results,
     parse_feed_items,
 )
 
@@ -111,6 +115,28 @@ class OsintMonitorTests(unittest.TestCase):
         matches = find_keyword_matches(text, KEYWORD_CATEGORIES)
 
         self.assertEqual(matches, {})
+
+    def test_log_results_writes_json_lines(self):
+        results = analyze_items(
+            [
+                FeedItem(
+                    title="Credential theft linked to breach",
+                    link="https://example.com/e",
+                    summary="Analysts are tracking phishing activity.",
+                    source="feed-e",
+                )
+            ],
+            KEYWORD_CATEGORIES,
+            CATEGORY_WEIGHTS,
+        )
+
+        with tempfile.NamedTemporaryFile("r+", encoding="utf-8") as handle:
+            log_results(results, log_file=Path(handle.name))
+            handle.seek(0)
+            log_record = json.loads(handle.readline())
+
+        self.assertEqual(log_record["results"][0]["title"], "Credential theft linked to breach")
+        self.assertIn("summary", log_record)
 
 
 if __name__ == "__main__":

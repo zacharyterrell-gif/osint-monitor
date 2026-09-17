@@ -10,13 +10,13 @@ This beginner-friendly script:
 - looks for keywords across several threat categories
 - assigns a simple threat score
 - prints a summary to the console
-- logs results to a local file
+- logs results to a local JSON lines file
 
 ## Files
 
 - `osint_monitor.py` - main monitoring script
 - `tests/test_osint_monitor.py` - basic unit tests
-- `osint_results.log` - created automatically after the script runs
+- `osint_results.log` - created automatically after the script runs, with one JSON record per run
 
 ## How to run
 
