@@ -115,7 +115,7 @@ class MonitorSourcesTests(unittest.TestCase):
 
         self.assertEqual(content, "http content")
         mock_connection_class.assert_called_once_with(
-            "example.com", "93.184.216.34", port=80, timeout=10
+            "93.184.216.34", port=80, timeout=10
         )
 
     @patch("osint_monitor.socket.getaddrinfo")

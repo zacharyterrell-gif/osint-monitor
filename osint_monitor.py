@@ -33,7 +33,7 @@ class ValidatedHTTPSConnection(http.client.HTTPSConnection):
 
 
 class ValidatedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, host: str, resolved_ip: str, **kwargs) -> None:
+    def __init__(self, resolved_ip: str, **kwargs) -> None:
         super().__init__(host=resolved_ip, **kwargs)
 
     def connect(self) -> None:
@@ -109,7 +109,7 @@ def _fetch_remote_source(source: str) -> str:
             context=ssl.create_default_context(),
         )
     else:
-        connection = ValidatedHTTPConnection(hostname, resolved_ip, port=port, timeout=10)
+        connection = ValidatedHTTPConnection(resolved_ip, port=port, timeout=10)
 
     try:
         connection.request("GET", request_target, headers={"Host": host_header})
