@@ -72,12 +72,12 @@ def _resolve_remote_target(source: str) -> tuple[str, int, str, str, str]:
             or ip_address.is_reserved
             or ip_address.is_unspecified
         ):
-            raise ValueError(f"Refusing to fetch non-public remote source: {source}")
+            continue
         if resolved_ip is None:
             resolved_ip = entry[4][0]
 
     if resolved_ip is None:
-        raise ValueError(f"Unable to resolve remote source: {source}")
+        raise ValueError(f"Refusing to fetch non-public remote source: {source}")
 
     request_target = parsed.path or "/"
     if parsed.query:
@@ -106,6 +106,8 @@ def _fetch_remote_source(source: str) -> str:
     try:
         connection.request("GET", request_target, headers={"Host": host_header})
         response = connection.getresponse()
+        if response.status >= 400:
+            raise ValueError(f"Remote source returned HTTP {response.status}: {source}")
         return response.read().decode("utf-8", errors="replace")
     except OSError as exc:
         raise URLError(exc) from exc

@@ -62,6 +62,7 @@ class MonitorSourcesTests(unittest.TestCase):
         ]
         mock_connection = mock_connection_class.return_value
         mock_response = mock_connection.getresponse.return_value
+        mock_response.status = 200
         mock_response.read.return_value = b"remote keyword hit"
 
         content = read_source("https://example.com/feed", allow_remote=True)
@@ -75,6 +76,31 @@ class MonitorSourcesTests(unittest.TestCase):
             "GET", "/feed", headers={"Host": "example.com"}
         )
 
+    @patch("osint_monitor.ValidatedHTTPSConnection")
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_read_source_uses_first_public_remote_address(
+        self, mock_getaddrinfo, mock_connection_class
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (None, None, None, None, ("127.0.0.1", 443)),
+            (None, None, None, None, ("93.184.216.34", 443)),
+        ]
+        mock_connection = mock_connection_class.return_value
+        mock_response = mock_connection.getresponse.return_value
+        mock_response.status = 200
+        mock_response.read.return_value = b"ok"
+
+        content = read_source("https://example.com/feed", allow_remote=True)
+
+        self.assertEqual(content, "ok")
+        mock_connection_class.assert_called_once_with(
+            "example.com",
+            "93.184.216.34",
+            port=443,
+            timeout=10,
+            context=mock_connection_class.call_args.kwargs["context"],
+        )
+
     @patch("osint_monitor.socket.getaddrinfo")
     def test_monitor_sources_reports_remote_fetch_failures(self, mock_getaddrinfo) -> None:
         mock_getaddrinfo.return_value = [(None, None, None, None, ("127.0.0.1", 80))]
@@ -85,6 +111,24 @@ class MonitorSourcesTests(unittest.TestCase):
 
         self.assertEqual(results[0]["matches"], [])
         self.assertIn("Refusing to fetch non-public remote source", results[0]["error"])
+
+    @patch("osint_monitor.ValidatedHTTPSConnection")
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_monitor_sources_reports_http_errors(
+        self, mock_getaddrinfo, mock_connection_class
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (None, None, None, None, ("93.184.216.34", 443))
+        ]
+        mock_response = mock_connection_class.return_value.getresponse.return_value
+        mock_response.status = 503
+
+        results = monitor_sources(
+            ["keyword"], ["https://example.com/feed"], allow_remote=True
+        )
+
+        self.assertEqual(results[0]["matches"], [])
+        self.assertIn("Remote source returned HTTP 503", results[0]["error"])
 
 
 class CliTests(unittest.TestCase):
@@ -100,6 +144,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload[0]["matches"][0]["keyword"], "indicator")
+
+    def test_main_returns_non_zero_when_any_source_fails(self) -> None:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = main(["-k", "indicator", "--json", "/does/not/exist.txt"])
+
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("error", payload[0])
 
 
 if __name__ == "__main__":
