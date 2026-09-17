@@ -1,0 +1,266 @@
+"""Beginner-friendly OSINT RSS monitor.
+
+This script fetches multiple RSS/Atom feeds, checks articles for keywords,
+assigns a simple threat score, prints a short summary, and logs matches to a
+file for later review.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+from urllib.error import URLError
+from urllib.request import urlopen
+import re
+import xml.etree.ElementTree as ET
+
+
+# These are example feeds a beginner can change without touching the logic.
+RSS_FEEDS = [
+    "https://feeds.feedburner.com/TheHackersNews",
+    "https://www.bleepingcomputer.com/feed/",
+]
+
+
+# More categories make it easier to group findings during triage.
+KEYWORD_CATEGORIES = {
+    "malware": ["malware", "trojan", "ransomware", "spyware", "botnet"],
+    "phishing": ["phishing", "credential theft", "spoofed login", "smishing"],
+    "vulnerabilities": ["cve", "zero-day", "vulnerability", "exploit", "patch"],
+    "infrastructure": ["ddos", "outage", "service disruption", "cdn", "dns"],
+    "data exposure": ["data leak", "breach", "database dump", "exposed bucket"],
+    "extremism": ["extremist", "radicalization", "terror threat"],
+}
+
+
+# Different categories can raise different levels of concern.
+CATEGORY_WEIGHTS = {
+    "malware": 3,
+    "phishing": 2,
+    "vulnerabilities": 3,
+    "infrastructure": 2,
+    "data exposure": 4,
+    "extremism": 5,
+}
+
+
+DEFAULT_LOG_FILE = Path("osint_results.log")
+
+
+@dataclass
+class FeedItem:
+    """A small container for normalized feed data."""
+
+    title: str
+    link: str
+    summary: str
+    source: str
+
+
+@dataclass
+class MatchResult:
+    """Stores the article plus the keyword match details."""
+
+    item: FeedItem
+    matched_keywords: dict[str, list[str]]
+    threat_score: int
+
+
+def clean_text(value: str) -> str:
+    """Collapse repeated whitespace so matching and output stay readable."""
+
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
+def fetch_feed(url: str) -> list[FeedItem]:
+    """Download and parse one RSS or Atom feed."""
+
+    try:
+        with urlopen(url, timeout=15) as response:
+            raw_xml = response.read()
+    except URLError as error:
+        print(f"Could not fetch feed: {url} ({error})")
+        return []
+
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError as error:
+        print(f"Could not parse feed: {url} ({error})")
+        return []
+
+    return parse_feed_items(root, url)
+
+
+def parse_feed_items(root: ET.Element, source: str) -> list[FeedItem]:
+    """Normalize RSS <item> entries and Atom <entry> records."""
+
+    items: list[FeedItem] = []
+
+    # RSS feeds usually use <channel><item>.
+    for item in root.findall(".//item"):
+        items.append(
+            FeedItem(
+                title=clean_text(item.findtext("title", "")),
+                link=clean_text(item.findtext("link", "")),
+                summary=clean_text(
+                    item.findtext("description", "") or item.findtext("summary", "")
+                ),
+                source=source,
+            )
+        )
+
+    if items:
+        return items
+
+    # Atom feeds usually use namespaces and <entry>.
+    for entry in root.findall(".//{*}entry"):
+        link = ""
+        link_element = entry.find("{*}link")
+        if link_element is not None:
+            link = clean_text(link_element.attrib.get("href", ""))
+
+        items.append(
+            FeedItem(
+                title=clean_text(entry.findtext("{*}title", "")),
+                link=link,
+                summary=clean_text(
+                    entry.findtext("{*}summary", "") or entry.findtext("{*}content", "")
+                ),
+                source=source,
+            )
+        )
+
+    return items
+
+
+def find_keyword_matches(text: str, categories: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Return every keyword found in the text, grouped by category."""
+
+    lowered_text = text.lower()
+    matches: dict[str, list[str]] = {}
+
+    for category, keywords in categories.items():
+        found_keywords = [keyword for keyword in keywords if keyword.lower() in lowered_text]
+        if found_keywords:
+            matches[category] = found_keywords
+
+    return matches
+
+
+def calculate_threat_score(
+    matched_keywords: dict[str, list[str]], weights: dict[str, int]
+) -> int:
+    """Add up category weights and matched keyword counts."""
+
+    score = 0
+
+    for category, keywords in matched_keywords.items():
+        score += weights.get(category, 1)
+        score += len(keywords)
+
+    return score
+
+
+def analyze_items(
+    items: Iterable[FeedItem],
+    categories: dict[str, list[str]],
+    weights: dict[str, int],
+) -> list[MatchResult]:
+    """Inspect items and keep only articles that matched at least one keyword."""
+
+    results: list[MatchResult] = []
+
+    for item in items:
+        search_text = f"{item.title} {item.summary}"
+        matches = find_keyword_matches(search_text, categories)
+        if matches:
+            results.append(
+                MatchResult(
+                    item=item,
+                    matched_keywords=matches,
+                    threat_score=calculate_threat_score(matches, weights),
+                )
+            )
+
+    return sorted(results, key=lambda result: result.threat_score, reverse=True)
+
+
+def build_summary(results: Iterable[MatchResult]) -> str:
+    """Create a short text summary for console output and logs."""
+
+    results = list(results)
+    if not results:
+        return "No matching items found."
+
+    category_totals: dict[str, int] = {}
+    highest_score = 0
+
+    for result in results:
+        highest_score = max(highest_score, result.threat_score)
+        for category in result.matched_keywords:
+            category_totals[category] = category_totals.get(category, 0) + 1
+
+    ordered_categories = ", ".join(
+        f"{category}: {count}"
+        for category, count in sorted(category_totals.items(), key=lambda item: item[1], reverse=True)
+    )
+
+    return (
+        f"Matched {len(results)} item(s). "
+        f"Highest threat score: {highest_score}. "
+        f"Category counts: {ordered_categories}."
+    )
+
+
+def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FILE) -> None:
+    """Append the latest findings to a local log file."""
+
+    results = list(results)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    summary = build_summary(results)
+
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {summary}\n")
+        for result in results:
+            categories = ", ".join(result.matched_keywords.keys())
+            handle.write(
+                f"  - score={result.threat_score} source={result.item.source} "
+                f"title={result.item.title} categories={categories} link={result.item.link}\n"
+            )
+
+
+def print_results(results: Iterable[MatchResult]) -> None:
+    """Show a readable summary on screen."""
+
+    results = list(results)
+    print(build_summary(results))
+
+    for result in results:
+        matched_text = "; ".join(
+            f"{category}: {', '.join(keywords)}"
+            for category, keywords in result.matched_keywords.items()
+        )
+        print(f"\nTitle: {result.item.title}")
+        print(f"Source: {result.item.source}")
+        print(f"Threat score: {result.threat_score}")
+        print(f"Matched: {matched_text}")
+        print(f"Link: {result.item.link}")
+
+
+def main() -> None:
+    """Fetch all feeds, analyze items, print a summary, and log results."""
+
+    all_items: list[FeedItem] = []
+
+    for feed_url in RSS_FEEDS:
+        all_items.extend(fetch_feed(feed_url))
+
+    results = analyze_items(all_items, KEYWORD_CATEGORIES, CATEGORY_WEIGHTS)
+    print_results(results)
+    log_results(results)
+
+
+if __name__ == "__main__":
+    main()
