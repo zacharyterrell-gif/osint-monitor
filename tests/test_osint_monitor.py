@@ -7,7 +7,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from osint_monitor import format_text_report, main, monitor_sources, read_source, scan_content
+from osint_monitor import (
+    MAX_REMOTE_BYTES,
+    format_text_report,
+    main,
+    monitor_sources,
+    read_source,
+    scan_content,
+)
 
 
 class ScanContentTests(unittest.TestCase):
@@ -58,7 +65,13 @@ class MonitorSourcesTests(unittest.TestCase):
         self, mock_getaddrinfo, mock_connection_class
     ) -> None:
         mock_getaddrinfo.return_value = [
-            (None, None, None, None, ("93.184.216.34", 443))
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
         ]
         mock_connection = mock_connection_class.return_value
         mock_response = mock_connection.getresponse.return_value
@@ -72,6 +85,16 @@ class MonitorSourcesTests(unittest.TestCase):
             "example.com", 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
         )
         mock_connection_class.assert_called_once()
+        self.assertEqual(
+            mock_connection_class.call_args.args[:5],
+            (
+                "example.com",
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                ("93.184.216.34", 443),
+            ),
+        )
         mock_connection.request.assert_called_once_with(
             "GET", "/feed", headers={"Host": "example.com"}
         )
@@ -82,8 +105,20 @@ class MonitorSourcesTests(unittest.TestCase):
         self, mock_getaddrinfo, mock_connection_class
     ) -> None:
         mock_getaddrinfo.return_value = [
-            (None, None, None, None, ("127.0.0.1", 443)),
-            (None, None, None, None, ("93.184.216.34", 443)),
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("127.0.0.1", 443),
+            ),
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            ),
         ]
         mock_connection = mock_connection_class.return_value
         mock_response = mock_connection.getresponse.return_value
@@ -93,12 +128,15 @@ class MonitorSourcesTests(unittest.TestCase):
         content = read_source("https://example.com/feed", allow_remote=True)
 
         self.assertEqual(content, "ok")
-        mock_connection_class.assert_called_once_with(
-            "example.com",
-            "93.184.216.34",
-            port=443,
-            timeout=10,
-            context=mock_connection_class.call_args.kwargs["context"],
+        self.assertEqual(
+            mock_connection_class.call_args.args[:5],
+            (
+                "example.com",
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                ("93.184.216.34", 443),
+            ),
         )
 
     @patch("osint_monitor.ValidatedHTTPConnection")
@@ -106,7 +144,15 @@ class MonitorSourcesTests(unittest.TestCase):
     def test_read_source_preserves_hostname_for_http_sources(
         self, mock_getaddrinfo, mock_connection_class
     ) -> None:
-        mock_getaddrinfo.return_value = [(None, None, None, None, ("93.184.216.34", 80))]
+        mock_getaddrinfo.return_value = [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 80),
+            )
+        ]
         mock_response = mock_connection_class.return_value.getresponse.return_value
         mock_response.status = 200
         mock_response.read.side_effect = [b"http content", b""]
@@ -114,13 +160,27 @@ class MonitorSourcesTests(unittest.TestCase):
         content = read_source("http://example.com/feed", allow_remote=True)
 
         self.assertEqual(content, "http content")
-        mock_connection_class.assert_called_once_with(
-            "93.184.216.34", port=80, timeout=10
+        self.assertEqual(
+            mock_connection_class.call_args.args[:4],
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                ("93.184.216.34", 80),
+            ),
         )
 
     @patch("osint_monitor.socket.getaddrinfo")
     def test_monitor_sources_reports_remote_fetch_failures(self, mock_getaddrinfo) -> None:
-        mock_getaddrinfo.return_value = [(None, None, None, None, ("127.0.0.1", 80))]
+        mock_getaddrinfo.return_value = [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("127.0.0.1", 80),
+            )
+        ]
 
         results = monitor_sources(
             ["keyword"], ["http://localhost/internal"], allow_remote=True
@@ -134,7 +194,13 @@ class MonitorSourcesTests(unittest.TestCase):
         self, mock_getaddrinfo
     ) -> None:
         mock_getaddrinfo.return_value = [
-            (None, None, None, None, ("198.51.100.10", 80))
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("198.51.100.10", 80),
+            )
         ]
 
         results = monitor_sources(
@@ -150,7 +216,13 @@ class MonitorSourcesTests(unittest.TestCase):
         self, mock_getaddrinfo, mock_connection_class
     ) -> None:
         mock_getaddrinfo.return_value = [
-            (None, None, None, None, ("93.184.216.34", 443))
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
         ]
         mock_response = mock_connection_class.return_value.getresponse.return_value
         mock_response.status = 503
@@ -161,6 +233,31 @@ class MonitorSourcesTests(unittest.TestCase):
 
         self.assertEqual(results[0]["matches"], [])
         self.assertIn("Remote source returned HTTP 503", results[0]["error"])
+
+    @patch("osint_monitor.ValidatedHTTPSConnection")
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_monitor_sources_rejects_oversized_remote_responses(
+        self, mock_getaddrinfo, mock_connection_class
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+        mock_response = mock_connection_class.return_value.getresponse.return_value
+        mock_response.status = 200
+        mock_response.read.side_effect = [b"x" * MAX_REMOTE_BYTES, b"x", b""]
+
+        results = monitor_sources(
+            ["keyword"], ["https://example.com/feed"], allow_remote=True
+        )
+
+        self.assertEqual(results[0]["matches"], [])
+        self.assertIn("Remote source exceeds", results[0]["error"])
 
 
 class CliTests(unittest.TestCase):

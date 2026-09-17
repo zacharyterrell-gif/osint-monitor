@@ -7,24 +7,48 @@ import json
 import socket
 import ssl
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
-from urllib.error import URLError
 from urllib.parse import urlparse
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
 MAX_REMOTE_BYTES = 1024 * 1024
 
 
+@dataclass(frozen=True)
+class RemoteTarget:
+    scheme: str
+    port: int
+    hostname: str
+    family: int
+    socktype: int
+    proto: int
+    sockaddr: tuple
+    request_target: str
+
+
 class ValidatedHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, server_hostname: str, resolved_ip: str, **kwargs) -> None:
+    def __init__(
+        self,
+        server_hostname: str,
+        family: int,
+        socktype: int,
+        proto: int,
+        sockaddr: tuple,
+        **kwargs,
+    ) -> None:
         self._server_hostname = server_hostname
-        super().__init__(host=resolved_ip, **kwargs)
+        self._family = family
+        self._socktype = socktype
+        self._proto = proto
+        self._sockaddr = sockaddr
+        super().__init__(host=server_hostname, **kwargs)
 
     def connect(self) -> None:
-        self.sock = socket.create_connection(
-            (self.host, self.port), self.timeout, self.source_address
-        )
+        self.sock = socket.socket(self._family, self._socktype, self._proto)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._sockaddr)
         if self._tunnel_host:
             self._tunnel()
         self.sock = self._context.wrap_socket(
@@ -33,13 +57,19 @@ class ValidatedHTTPSConnection(http.client.HTTPSConnection):
 
 
 class ValidatedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, resolved_ip: str, **kwargs) -> None:
-        super().__init__(host=resolved_ip, **kwargs)
+    def __init__(
+        self, family: int, socktype: int, proto: int, sockaddr: tuple, **kwargs
+    ) -> None:
+        self._family = family
+        self._socktype = socktype
+        self._proto = proto
+        self._sockaddr = sockaddr
+        super().__init__(host=sockaddr[0], **kwargs)
 
     def connect(self) -> None:
-        self.sock = socket.create_connection(
-            (self.host, self.port), self.timeout, self.source_address
-        )
+        self.sock = socket.socket(self._family, self._socktype, self._proto)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._sockaddr)
         if self._tunnel_host:
             self._tunnel()
 
@@ -63,7 +93,7 @@ def scan_content(source: str, content: str, keywords: Iterable[str]) -> dict:
     return {"source": source, "matches": matches}
 
 
-def _resolve_remote_target(source: str) -> tuple[str, int, str, str, str]:
+def _resolve_remote_target(source: str) -> RemoteTarget:
     parsed = urlparse(source)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"Unsupported URL source: {source}")
@@ -76,43 +106,64 @@ def _resolve_remote_target(source: str) -> tuple[str, int, str, str, str]:
     except socket.gaierror as exc:
         raise ValueError(f"Unable to resolve remote source: {source}") from exc
 
-    resolved_ip = None
+    selected_address = None
     for entry in address_info:
-        ip_address = ipaddress.ip_address(entry[4][0])
+        family, socktype, proto, _, sockaddr = entry
+        ip_address = ipaddress.ip_address(sockaddr[0])
         if not ip_address.is_global:
             continue
-        if resolved_ip is None:
-            resolved_ip = entry[4][0]
+        if selected_address is None:
+            selected_address = (family, socktype, proto, sockaddr)
 
-    if resolved_ip is None:
+    if selected_address is None:
         raise ValueError(f"Refusing to fetch non-public remote source: {source}")
 
     request_target = parsed.path or "/"
     if parsed.query:
         request_target = f"{request_target}?{parsed.query}"
 
-    return parsed.scheme, port, parsed.hostname, resolved_ip, request_target
+    family, socktype, proto, sockaddr = selected_address
+    return RemoteTarget(
+        scheme=parsed.scheme,
+        port=port,
+        hostname=parsed.hostname,
+        family=family,
+        socktype=socktype,
+        proto=proto,
+        sockaddr=sockaddr,
+        request_target=request_target,
+    )
 
 
 def _fetch_remote_source(source: str) -> str:
-    scheme, port, hostname, resolved_ip, request_target = _resolve_remote_target(source)
-    host_header = hostname
-    if port != DEFAULT_PORTS[scheme]:
-        host_header = f"{hostname}:{port}"
+    target = _resolve_remote_target(source)
+    host_header = target.hostname
+    if target.port != DEFAULT_PORTS[target.scheme]:
+        host_header = f"{target.hostname}:{target.port}"
 
-    if scheme == "https":
+    if target.scheme == "https":
         connection = ValidatedHTTPSConnection(
-            hostname,
-            resolved_ip,
-            port=port,
+            target.hostname,
+            target.family,
+            target.socktype,
+            target.proto,
+            target.sockaddr,
+            port=target.port,
             timeout=10,
             context=ssl.create_default_context(),
         )
     else:
-        connection = ValidatedHTTPConnection(resolved_ip, port=port, timeout=10)
+        connection = ValidatedHTTPConnection(
+            target.family,
+            target.socktype,
+            target.proto,
+            target.sockaddr,
+            port=target.port,
+            timeout=10,
+        )
 
     try:
-        connection.request("GET", request_target, headers={"Host": host_header})
+        connection.request("GET", target.request_target, headers={"Host": host_header})
         response = connection.getresponse()
         if response.status >= 400:
             raise ValueError(f"Remote source returned HTTP {response.status}: {source}")
@@ -130,7 +181,7 @@ def _fetch_remote_source(source: str) -> str:
             chunks.append(chunk)
         return b"".join(chunks).decode("utf-8", errors="replace")
     except OSError as exc:
-        raise URLError(exc) from exc
+        raise ValueError(f"Unable to fetch remote source: {source}") from exc
     finally:
         connection.close()
 
@@ -157,7 +208,7 @@ def monitor_sources(
     for source in sources:
         try:
             content = read_source(source, allow_remote=allow_remote)
-        except (OSError, URLError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             results.append({"source": source, "matches": [], "error": str(exc)})
             continue
 
