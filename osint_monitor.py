@@ -13,30 +13,32 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
+MAX_REMOTE_BYTES = 1024 * 1024
 
 
 class ValidatedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, server_hostname: str, resolved_ip: str, **kwargs) -> None:
-        self._resolved_ip = resolved_ip
-        super().__init__(host=server_hostname, **kwargs)
+        self._server_hostname = server_hostname
+        super().__init__(host=resolved_ip, **kwargs)
 
     def connect(self) -> None:
         self.sock = socket.create_connection(
-            (self._resolved_ip, self.port), self.timeout, self.source_address
+            (self.host, self.port), self.timeout, self.source_address
         )
         if self._tunnel_host:
             self._tunnel()
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+        self.sock = self._context.wrap_socket(
+            self.sock, server_hostname=self._server_hostname
+        )
 
 
 class ValidatedHTTPConnection(http.client.HTTPConnection):
     def __init__(self, host: str, resolved_ip: str, **kwargs) -> None:
-        self._resolved_ip = resolved_ip
-        super().__init__(host=host, **kwargs)
+        super().__init__(host=resolved_ip, **kwargs)
 
     def connect(self) -> None:
         self.sock = socket.create_connection(
-            (self._resolved_ip, self.port), self.timeout, self.source_address
+            (self.host, self.port), self.timeout, self.source_address
         )
         if self._tunnel_host:
             self._tunnel()
@@ -114,7 +116,19 @@ def _fetch_remote_source(source: str) -> str:
         response = connection.getresponse()
         if response.status >= 400:
             raise ValueError(f"Remote source returned HTTP {response.status}: {source}")
-        return response.read().decode("utf-8", errors="replace")
+        chunks = []
+        total_bytes = 0
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_REMOTE_BYTES:
+                raise ValueError(
+                    f"Remote source exceeds {MAX_REMOTE_BYTES} bytes: {source}"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
     except OSError as exc:
         raise URLError(exc) from exc
     finally:

@@ -63,7 +63,7 @@ class MonitorSourcesTests(unittest.TestCase):
         mock_connection = mock_connection_class.return_value
         mock_response = mock_connection.getresponse.return_value
         mock_response.status = 200
-        mock_response.read.return_value = b"remote keyword hit"
+        mock_response.read.side_effect = [b"remote keyword hit", b""]
 
         content = read_source("https://example.com/feed", allow_remote=True)
 
@@ -88,7 +88,7 @@ class MonitorSourcesTests(unittest.TestCase):
         mock_connection = mock_connection_class.return_value
         mock_response = mock_connection.getresponse.return_value
         mock_response.status = 200
-        mock_response.read.return_value = b"ok"
+        mock_response.read.side_effect = [b"ok", b""]
 
         content = read_source("https://example.com/feed", allow_remote=True)
 
@@ -109,7 +109,7 @@ class MonitorSourcesTests(unittest.TestCase):
         mock_getaddrinfo.return_value = [(None, None, None, None, ("93.184.216.34", 80))]
         mock_response = mock_connection_class.return_value.getresponse.return_value
         mock_response.status = 200
-        mock_response.read.return_value = b"http content"
+        mock_response.read.side_effect = [b"http content", b""]
 
         content = read_source("http://example.com/feed", allow_remote=True)
 
