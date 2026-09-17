@@ -29,6 +29,19 @@ class ValidatedHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
 
+class ValidatedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, resolved_ip: str, **kwargs) -> None:
+        self._resolved_ip = resolved_ip
+        super().__init__(host=host, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._resolved_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self._tunnel()
+
+
 def scan_content(source: str, content: str, keywords: Iterable[str]) -> dict:
     normalized_keywords = [keyword.casefold() for keyword in keywords if keyword.strip()]
     matches = []
@@ -64,14 +77,7 @@ def _resolve_remote_target(source: str) -> tuple[str, int, str, str, str]:
     resolved_ip = None
     for entry in address_info:
         ip_address = ipaddress.ip_address(entry[4][0])
-        if (
-            ip_address.is_private
-            or ip_address.is_loopback
-            or ip_address.is_link_local
-            or ip_address.is_multicast
-            or ip_address.is_reserved
-            or ip_address.is_unspecified
-        ):
+        if not ip_address.is_global:
             continue
         if resolved_ip is None:
             resolved_ip = entry[4][0]
@@ -101,7 +107,7 @@ def _fetch_remote_source(source: str) -> str:
             context=ssl.create_default_context(),
         )
     else:
-        connection = http.client.HTTPConnection(resolved_ip, port=port, timeout=10)
+        connection = ValidatedHTTPConnection(hostname, resolved_ip, port=port, timeout=10)
 
     try:
         connection.request("GET", request_target, headers={"Host": host_header})

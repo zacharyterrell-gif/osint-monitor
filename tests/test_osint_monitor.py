@@ -101,12 +101,44 @@ class MonitorSourcesTests(unittest.TestCase):
             context=mock_connection_class.call_args.kwargs["context"],
         )
 
+    @patch("osint_monitor.ValidatedHTTPConnection")
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_read_source_preserves_hostname_for_http_sources(
+        self, mock_getaddrinfo, mock_connection_class
+    ) -> None:
+        mock_getaddrinfo.return_value = [(None, None, None, None, ("93.184.216.34", 80))]
+        mock_response = mock_connection_class.return_value.getresponse.return_value
+        mock_response.status = 200
+        mock_response.read.return_value = b"http content"
+
+        content = read_source("http://example.com/feed", allow_remote=True)
+
+        self.assertEqual(content, "http content")
+        mock_connection_class.assert_called_once_with(
+            "example.com", "93.184.216.34", port=80, timeout=10
+        )
+
     @patch("osint_monitor.socket.getaddrinfo")
     def test_monitor_sources_reports_remote_fetch_failures(self, mock_getaddrinfo) -> None:
         mock_getaddrinfo.return_value = [(None, None, None, None, ("127.0.0.1", 80))]
 
         results = monitor_sources(
             ["keyword"], ["http://localhost/internal"], allow_remote=True
+        )
+
+        self.assertEqual(results[0]["matches"], [])
+        self.assertIn("Refusing to fetch non-public remote source", results[0]["error"])
+
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_monitor_sources_rejects_documentation_network_addresses(
+        self, mock_getaddrinfo
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (None, None, None, None, ("198.51.100.10", 80))
+        ]
+
+        results = monitor_sources(
+            ["keyword"], ["http://example.invalid/feed"], allow_remote=True
         )
 
         self.assertEqual(results[0]["matches"], [])
