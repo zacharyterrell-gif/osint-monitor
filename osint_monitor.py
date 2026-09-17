@@ -116,10 +116,7 @@ def parse_feed_items(root: ET.Element, source: str) -> list[FeedItem]:
 
     # Atom feeds usually use namespaces and <entry>.
     for entry in root.findall(".//{*}entry"):
-        link = ""
-        link_element = entry.find("{*}link")
-        if link_element is not None:
-            link = clean_text(link_element.attrib.get("href", ""))
+        link = extract_atom_link(entry)
 
         items.append(
             FeedItem(
@@ -135,6 +132,32 @@ def parse_feed_items(root: ET.Element, source: str) -> list[FeedItem]:
     return items
 
 
+def extract_atom_link(entry: ET.Element) -> str:
+    """Prefer the normal article link when an Atom entry has many links."""
+
+    fallback_link = ""
+
+    for link_element in entry.findall("{*}link"):
+        href = clean_text(link_element.attrib.get("href", ""))
+        rel = clean_text(link_element.attrib.get("rel", "")).lower()
+
+        if not href:
+            continue
+        if rel in ("", "alternate"):
+            return href
+        if not fallback_link:
+            fallback_link = href
+
+    return fallback_link
+
+
+def keyword_in_text(text: str, keyword: str) -> bool:
+    """Match whole terms or full phrases to avoid substring false positives."""
+
+    pattern = rf"(?<!\w){re.escape(keyword.lower())}(?!\w)"
+    return re.search(pattern, text) is not None
+
+
 def find_keyword_matches(text: str, categories: dict[str, list[str]]) -> dict[str, list[str]]:
     """Return every keyword found in the text, grouped by category."""
 
@@ -142,7 +165,7 @@ def find_keyword_matches(text: str, categories: dict[str, list[str]]) -> dict[st
     matches: dict[str, list[str]] = {}
 
     for category, keywords in categories.items():
-        found_keywords = [keyword for keyword in keywords if keyword.lower() in lowered_text]
+        found_keywords = [keyword for keyword in keywords if keyword_in_text(lowered_text, keyword)]
         if found_keywords:
             matches[category] = found_keywords
 

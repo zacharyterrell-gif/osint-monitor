@@ -41,6 +41,23 @@ class OsintMonitorTests(unittest.TestCase):
         self.assertEqual(items[0].title, "New zero-day found")
         self.assertEqual(items[0].link, "https://example.com/1")
 
+    def test_parse_feed_items_prefers_atom_alternate_link(self):
+        xml_data = """
+        <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <title>Threat update</title>
+                <link rel="self" href="https://example.com/feed-entry" />
+                <link rel="alternate" href="https://example.com/article" />
+                <summary>Possible breach activity.</summary>
+            </entry>
+        </feed>
+        """
+
+        items = parse_feed_items(ET.fromstring(xml_data), "https://example.com/atom")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].link, "https://example.com/article")
+
     def test_analyze_items_sorts_highest_threat_score_first(self):
         items = [
             FeedItem(
@@ -87,6 +104,13 @@ class OsintMonitorTests(unittest.TestCase):
 
         self.assertIn("Matched 1 item(s).", summary)
         self.assertIn("infrastructure: 1", summary)
+
+    def test_find_keyword_matches_avoids_false_substring_hits(self):
+        text = "Analysts receive new notes after the meeting."
+
+        matches = find_keyword_matches(text, KEYWORD_CATEGORIES)
+
+        self.assertEqual(matches, {})
 
 
 if __name__ == "__main__":
