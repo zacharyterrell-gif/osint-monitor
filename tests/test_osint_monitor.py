@@ -1,5 +1,6 @@
 import io
 import json
+import socket
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -51,21 +52,28 @@ class MonitorSourcesTests(unittest.TestCase):
         self.assertIn("Source: /does/not/exist.txt", report)
         self.assertIn("Error:", report)
 
-    @patch("osint_monitor.urlopen")
+    @patch("osint_monitor.ValidatedHTTPSConnection")
     @patch("osint_monitor.socket.getaddrinfo")
     def test_read_source_fetches_public_remote_urls(
-        self, mock_getaddrinfo, mock_urlopen
+        self, mock_getaddrinfo, mock_connection_class
     ) -> None:
         mock_getaddrinfo.return_value = [
             (None, None, None, None, ("93.184.216.34", 443))
         ]
-        mock_response = mock_urlopen.return_value.__enter__.return_value
+        mock_connection = mock_connection_class.return_value
+        mock_response = mock_connection.getresponse.return_value
         mock_response.read.return_value = b"remote keyword hit"
 
         content = read_source("https://example.com/feed", allow_remote=True)
 
         self.assertEqual(content, "remote keyword hit")
-        mock_urlopen.assert_called_once()
+        mock_getaddrinfo.assert_called_once_with(
+            "example.com", 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
+        mock_connection_class.assert_called_once()
+        mock_connection.request.assert_called_once_with(
+            "GET", "/feed", headers={"Host": "example.com"}
+        )
 
     @patch("osint_monitor.socket.getaddrinfo")
     def test_monitor_sources_reports_remote_fetch_failures(self, mock_getaddrinfo) -> None:

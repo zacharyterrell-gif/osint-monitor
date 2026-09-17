@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import ipaddress
 import json
 import socket
+import ssl
 import sys
 from pathlib import Path
 from typing import Iterable
 from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
+
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+class ValidatedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, server_hostname: str, resolved_ip: str, **kwargs) -> None:
+        self._resolved_ip = resolved_ip
+        super().__init__(host=server_hostname, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._resolved_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self._tunnel()
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
 
 def scan_content(source: str, content: str, keywords: Iterable[str]) -> dict:
@@ -31,16 +48,20 @@ def scan_content(source: str, content: str, keywords: Iterable[str]) -> dict:
     return {"source": source, "matches": matches}
 
 
-def _validate_remote_target(source: str) -> None:
+def _resolve_remote_target(source: str) -> tuple[str, int, str, str, str]:
     parsed = urlparse(source)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"Unsupported URL source: {source}")
 
+    port = parsed.port or DEFAULT_PORTS[parsed.scheme]
     try:
-        address_info = socket.getaddrinfo(parsed.hostname, parsed.port, proto=socket.IPPROTO_TCP)
+        address_info = socket.getaddrinfo(
+            parsed.hostname, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
     except socket.gaierror as exc:
         raise ValueError(f"Unable to resolve remote source: {source}") from exc
 
+    resolved_ip = None
     for entry in address_info:
         ip_address = ipaddress.ip_address(entry[4][0])
         if (
@@ -52,6 +73,44 @@ def _validate_remote_target(source: str) -> None:
             or ip_address.is_unspecified
         ):
             raise ValueError(f"Refusing to fetch non-public remote source: {source}")
+        if resolved_ip is None:
+            resolved_ip = entry[4][0]
+
+    if resolved_ip is None:
+        raise ValueError(f"Unable to resolve remote source: {source}")
+
+    request_target = parsed.path or "/"
+    if parsed.query:
+        request_target = f"{request_target}?{parsed.query}"
+
+    return parsed.scheme, port, parsed.hostname, resolved_ip, request_target
+
+
+def _fetch_remote_source(source: str) -> str:
+    scheme, port, hostname, resolved_ip, request_target = _resolve_remote_target(source)
+    host_header = hostname
+    if port != DEFAULT_PORTS[scheme]:
+        host_header = f"{hostname}:{port}"
+
+    if scheme == "https":
+        connection = ValidatedHTTPSConnection(
+            hostname,
+            resolved_ip,
+            port=port,
+            timeout=10,
+            context=ssl.create_default_context(),
+        )
+    else:
+        connection = http.client.HTTPConnection(resolved_ip, port=port, timeout=10)
+
+    try:
+        connection.request("GET", request_target, headers={"Host": host_header})
+        response = connection.getresponse()
+        return response.read().decode("utf-8", errors="replace")
+    except OSError as exc:
+        raise URLError(exc) from exc
+    finally:
+        connection.close()
 
 
 def read_source(source: str, allow_remote: bool = False) -> str:
@@ -63,9 +122,7 @@ def read_source(source: str, allow_remote: bool = False) -> str:
             raise ValueError(
                 "Remote URL sources are disabled by default. Re-run with --allow-remote."
             )
-        _validate_remote_target(source)
-        with urlopen(source, timeout=10) as response:
-            return response.read().decode("utf-8", errors="replace")
+        return _fetch_remote_source(source)
 
     return Path(source).read_text(encoding="utf-8")
 
@@ -111,7 +168,7 @@ def format_text_report(results: Iterable[dict]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Monitor local files or URLs for OSINT keywords."
+        description="Monitor local files or HTTP(S) URLs for OSINT keywords."
     )
     parser.add_argument(
         "-k",
@@ -134,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "sources",
         nargs="+",
-        help="File paths, URLs, or '-' to read from standard input.",
+        help="File paths, HTTP(S) URLs, or '-' to read from standard input.",
     )
     return parser
 
