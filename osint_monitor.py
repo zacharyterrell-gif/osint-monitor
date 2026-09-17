@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 import json
 import logging
+import threading
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -52,6 +53,7 @@ CATEGORY_WEIGHTS = {
 
 DEFAULT_LOG_FILE = Path("osint_results.log")
 LOGGER = logging.getLogger(__name__)
+WRITE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -269,11 +271,12 @@ def log_results(results: Iterable[MatchResult], log_file: Path = DEFAULT_LOG_FIL
     log_file.parent.mkdir(parents=True, exist_ok=True)
     # Writing one full line with O_APPEND keeps each record together across runs.
     log_line = (json.dumps(log_record, ensure_ascii=False) + "\n").encode("utf-8")
-    file_descriptor = os.open(log_file, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
-    try:
-        os.write(file_descriptor, log_line)
-    finally:
-        os.close(file_descriptor)
+    with WRITE_LOCK:
+        file_descriptor = os.open(log_file, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            os.write(file_descriptor, log_line)
+        finally:
+            os.close(file_descriptor)
 
 
 def print_results(results: Iterable[MatchResult]) -> None:

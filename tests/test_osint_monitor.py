@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import multiprocessing
 import tempfile
 import threading
 import unittest
@@ -193,6 +194,39 @@ class OsintMonitorTests(unittest.TestCase):
 
         self.assertEqual(len(log_records), 10)
         self.assertTrue(all(record["results"][0]["title"] == "Zero-day phishing campaign" for record in log_records))
+
+    def test_log_results_keeps_multi_process_appends_as_json_lines(self):
+        results = analyze_items(
+            [
+                FeedItem(
+                    title="Malware breach alert",
+                    link="https://example.com/h",
+                    summary="A ransomware operation caused a breach.",
+                    source="feed-h",
+                )
+            ],
+            KEYWORD_CATEGORIES,
+            CATEGORY_WEIGHTS,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_file = Path(temp_dir) / "osint_results.log"
+            processes = [
+                multiprocessing.Process(target=log_results, args=(results, log_file))
+                for _ in range(6)
+            ]
+
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join()
+                self.assertEqual(process.exitcode, 0)
+
+            with log_file.open("r", encoding="utf-8") as handle:
+                log_records = [json.loads(line) for line in handle.readlines()]
+
+        self.assertEqual(len(log_records), 6)
+        self.assertTrue(all(record["results"][0]["title"] == "Malware breach alert" for record in log_records))
 
 
 if __name__ == "__main__":
