@@ -22,7 +22,7 @@ Emit JSON for downstream tooling:
 python osint_monitor.py -k malware --json ./intel_feed.txt
 ```
 
-Remote URLs are supported only with an explicit opt-in, and local/private network targets are rejected:
+Remote `http://` and `https://` URLs are supported only with an explicit opt-in, and local/private network targets are rejected:
 
 ```bash
 python osint_monitor.py --allow-remote -k malware https://example.com/feed

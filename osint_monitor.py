@@ -180,6 +180,8 @@ def _fetch_remote_source(source: str) -> str:
                 )
             chunks.append(chunk)
         return b"".join(chunks).decode("utf-8", errors="replace")
+    except ValueError:
+        raise
     except OSError as exc:
         raise ValueError(f"Unable to fetch remote source: {source}") from exc
     finally:
