@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from osint_monitor import format_text_report, main, monitor_sources, scan_content
+from osint_monitor import format_text_report, main, monitor_sources, read_source, scan_content
 
 
 class ScanContentTests(unittest.TestCase):
@@ -49,6 +50,33 @@ class MonitorSourcesTests(unittest.TestCase):
 
         self.assertIn("Source: /does/not/exist.txt", report)
         self.assertIn("Error:", report)
+
+    @patch("osint_monitor.urlopen")
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_read_source_fetches_public_remote_urls(
+        self, mock_getaddrinfo, mock_urlopen
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (None, None, None, None, ("93.184.216.34", 443))
+        ]
+        mock_response = mock_urlopen.return_value.__enter__.return_value
+        mock_response.read.return_value = b"remote keyword hit"
+
+        content = read_source("https://example.com/feed", allow_remote=True)
+
+        self.assertEqual(content, "remote keyword hit")
+        mock_urlopen.assert_called_once()
+
+    @patch("osint_monitor.socket.getaddrinfo")
+    def test_monitor_sources_reports_remote_fetch_failures(self, mock_getaddrinfo) -> None:
+        mock_getaddrinfo.return_value = [(None, None, None, None, ("127.0.0.1", 80))]
+
+        results = monitor_sources(
+            ["keyword"], ["http://localhost/internal"], allow_remote=True
+        )
+
+        self.assertEqual(results[0]["matches"], [])
+        self.assertIn("Refusing to fetch non-public remote source", results[0]["error"])
 
 
 class CliTests(unittest.TestCase):
